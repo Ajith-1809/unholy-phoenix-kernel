@@ -9,160 +9,37 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 240
-
     steps:
     - uses: actions/checkout@v4
-
-    - name: Free disk space
-      run: |
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        docker image prune -af
-
-    - name: Setup environment
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y build-essential bc bison flex curl git zip unzip libssl-dev libelf-dev cpio libncurses-dev wget python3 gcc g++ clang lld llvm device-tree-compiler rsync gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu
-
-    - name: Clone kernel source
-      run: |
-        git clone --depth 1 -b v2.2 https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
-
+    - name: Free disk
+      run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc && docker image prune -af
+    - name: Setup
+      run: sudo apt-get update -y && sudo apt-get install -y build-essential bc bison flex curl git zip unzip libssl-dev libelf-dev cpio libncurses-dev wget python3 gcc g++ clang lld llvm device-tree-compiler rsync gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu
+    - name: Clone kernel
+      run: git clone --depth 1 -b v2.2 https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
     - name: Clone toolchain
-      run: |
-        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
-
-    - name: Clone KernelSU-Next v3.2.0
-      run: |
-        cd kernel_source
-        git clone --branch v3.2.0 --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git || git clone --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
-        rm -rf drivers/kernelsu 2>/dev/null
-        ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
-        grep -q kernelsu drivers/Makefile || (echo "" >> drivers/Makefile && echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile)
-        grep -q kernelsu drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-
+      run: git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
+    - name: Clone KernelSU-Next
+      run: cd kernel_source && git clone --branch v3.2.0 --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git && rm -rf drivers/kernelsu 2>/dev/null; ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu && echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile && sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
     - name: Clone SusFS
-      run: |
-        git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://github.com/simonpunk/susfs4ksu.git susfs4ksu || echo "SusFS clone failed"
-
+      run: git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://github.com/simonpunk/susfs4ksu.git susfs4ksu || true
     - name: Integrate SusFS
-      run: |
-        cd kernel_source
-        if [ -d ../susfs4ksu/kernel_patches ]; then
-          for p in ../susfs4ksu/kernel_patches/KernelSU-Next/*.patch; do [ -f "$p" ] && cp "$p" ./KernelSU-Next/ && cd KernelSU-Next && yes | patch -p1 --forward < "$(basename $p)" 2>/dev/null; cd ..; done
-          for p in ../susfs4ksu/kernel_patches/*.patch; do [ -f "$p" ] && yes | patch -p1 -F 3 --forward < "$p" 2>/dev/null; done
-          [ -d ../susfs4ksu/kernel_patches/fs ] && cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null
-          [ -d ../susfs4ksu/kernel_patches/include ] && cp -r ../susfs4ksu/kernel_patches/include/* ./include/ 2>/dev/null
-          [ -d ../susfs4ksu/kernel_patches/arch ] && cp -r ../susfs4ksu/kernel_patches/arch/* ./arch/ 2>/dev/null
-        fi
-
+      run: cd kernel_source && if [ -d ../susfs4ksu/kernel_patches ]; then for p in ../susfs4ksu/kernel_patches/KernelSU-Next/*.patch; do [ -f "$p" ] && cp "$p" ./KernelSU-Next/ && cd KernelSU-Next && yes | patch -p1 --forward < "$(basename $p)" 2>/dev/null; cd ..; done; for p in ../susfs4ksu/kernel_patches/*.patch; do [ -f "$p" ] && yes | patch -p1 -F 3 --forward < "$p" 2>/dev/null; done; [ -d ../susfs4ksu/kernel_patches/fs ] && cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null; [ -d ../susfs4ksu/kernel_patches/include ] && cp -r ../susfs4ksu/kernel_patches/include/* ./include/ 2>/dev/null; [ -d ../susfs4ksu/kernel_patches/arch ] && cp -r ../susfs4ksu/kernel_patches/arch/* ./arch/ 2>/dev/null; fi
     - name: Add SusFS Kconfig
-      run: |
-        cd kernel_source
-        if ! grep -q KSU_SUSFS fs/Kconfig 2>/dev/null; then
-          echo '' >> fs/Kconfig
-          echo 'menuconfig KSU_SUSFS' >> fs/Kconfig
-          echo '	bool "SusFS - Root hiding"' >> fs/Kconfig
-          echo '	default n' >> fs/Kconfig
-          echo 'if KSU_SUSFS' >> fs/Kconfig
-          echo 'config KSU_SUSFS_SUS_PATH' >> fs/Kconfig
-          echo '	bool "Hide suspicious paths"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_SUS_MOUNT' >> fs/Kconfig
-          echo '	bool "Hide suspicious mounts"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_SUS_KSTAT' >> fs/Kconfig
-          echo '	bool "Spoof file statistics"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_SUS_OVERLAYFS' >> fs/Kconfig
-          echo '	bool "Hide overlayfs"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_TRY_UMOUNT' >> fs/Kconfig
-          echo '	bool "Try unmount"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_SPOOF_UNAME' >> fs/Kconfig
-          echo '	bool "Spoof uname"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_ENABLE_LOG' >> fs/Kconfig
-          echo '	bool "Enable logging"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' >> fs/Kconfig
-          echo '	bool "Hide symbols"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_OPEN_REDIRECT' >> fs/Kconfig
-          echo '	bool "Open redirect"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_SUS_SU' >> fs/Kconfig
-          echo '	bool "Suspicious su"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG' >> fs/Kconfig
-          echo '	bool "Spoof cmdline"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'config KSU_SUSFS_SELINUX_POLICY_INJECTION' >> fs/Kconfig
-          echo '	bool "SELinux policy injection"' >> fs/Kconfig
-          echo '	default y' >> fs/Kconfig
-          echo 'endif' >> fs/Kconfig
-        fi
-
-    - name: Configure kernel
-      run: |
-        cd kernel_source
-        DEFCONFIG=arch/arm64/configs/phoenix_defconfig
-        sed -i '/^CONFIG_KSU/d' $DEFCONFIG 2>/dev/null
-        sed -i '/^CONFIG_SECURITY_SELINUX/d' $DEFCONFIG 2>/dev/null
-        cat >> $DEFCONFIG << 'EOF'
-CONFIG_KPROBES=y
-CONFIG_KSU=y
-CONFIG_KSU_DEBUG=n
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
-CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_ENABLE_LOG=y
-CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-CONFIG_KSU_SUSFS_SUS_SU=y
-CONFIG_KSU_SUSFS_SELINUX_POLICY_INJECTION=y
-CONFIG_SECURITY_SELINUX=y
-EOF
-
-    - name: Build kernel
-      run: |
-        cd kernel_source
-        export PATH=${{ github.workspace }}/proton-clang/bin:$PATH
-        mkdir -p out
-        cp arch/arm64/configs/phoenix_defconfig out/.config
-        make O=out ARCH=arm64 oldconfig < /dev/null 2>&1 || true
-        make -j$(nproc) O=out HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld HOSTCFLAGS="-fcommon" KBUILD_HOSTCFLAGS="-fcommon" ARCH=arm64 CC="${{ github.workspace }}/proton-clang/bin/clang" CROSS_COMPILE="${{ github.workspace }}/proton-clang/bin/aarch64-linux-gnu-" CROSS_COMPILE_ARM32="${{ github.workspace }}/proton-clang/bin/arm-linux-gnueabi-" LD="${{ github.workspace }}/proton-clang/bin/ld.lld" AR="${{ github.workspace }}/proton-clang/bin/llvm-ar" NM="${{ github.workspace }}/proton-clang/bin/llvm-nm" OBJCOPY="${{ github.workspace }}/proton-clang/bin/llvm-objcopy" OBJDUMP="${{ github.workspace }}/proton-clang/bin/llvm-objdump" STRIP="${{ github.workspace }}/proton-clang/bin/llvm-strip" Image.gz-dtb 2>&1 | tee ${{ github.workspace }}/build.log
-
+      run: cd kernel_source && echo 'menuconfig KSU_SUSFS' >> fs/Kconfig && echo '	bool "SusFS"' >> fs/Kconfig && echo '	default n' >> fs/Kconfig && echo 'if KSU_SUSFS' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_PATH' >> fs/Kconfig && echo '	bool "Hide suspicious paths"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_MOUNT' >> fs/Kconfig && echo '	bool "Hide suspicious mounts"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_KSTAT' >> fs/Kconfig && echo '	bool "Spoof file stats"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_OVERLAYFS' >> fs/Kconfig && echo '	bool "Hide overlayfs"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_TRY_UMOUNT' >> fs/Kconfig && echo '	bool "Try unmount"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SPOOF_UNAME' >> fs/Kconfig && echo '	bool "Spoof uname"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_ENABLE_LOG' >> fs/Kconfig && echo '	bool "Enable logging"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' >> fs/Kconfig && echo '	bool "Hide symbols"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_OPEN_REDIRECT' >> fs/Kconfig && echo '	bool "Open redirect"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_SU' >> fs/Kconfig && echo '	bool "Suspicious su"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG' >> fs/Kconfig && echo '	bool "Spoof cmdline"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SELINUX_POLICY_INJECTION' >> fs/Kconfig && echo '	bool "SELinux policy injection"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'endif' >> fs/Kconfig
+    - name: Configure
+      run: cd kernel_source && sed -i '/^CONFIG_KSU/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null; sed -i '/^CONFIG_SECURITY_SELINUX/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null; echo -e '\nCONFIG_KPROBES=y\nCONFIG_KSU=y\nCONFIG_KSU_SUSFS=y\nCONFIG_KSU_SUSFS_SUS_PATH=y\nCONFIG_KSU_SUSFS_SUS_MOUNT=y\nCONFIG_KSU_SUSFS_SUS_KSTAT=y\nCONFIG_KSU_SUSFS_SUS_OVERLAYFS=y\nCONFIG_KSU_SUSFS_TRY_UMOUNT=y\nCONFIG_KSU_SUSFS_SPOOF_UNAME=y\nCONFIG_KSU_SUSFS_ENABLE_LOG=y\nCONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y\nCONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y\nCONFIG_KSU_SUSFS_OPEN_REDIRECT=y\nCONFIG_KSU_SUSFS_SUS_SU=y\nCONFIG_KSU_SUSFS_SELINUX_POLICY_INJECTION=y\nCONFIG_SECURITY_SELINUX=y' >> arch/arm64/configs/phoenix_defconfig
+    - name: Build
+      run: cd kernel_source && export PATH=${{ github.workspace }}/proton-clang/bin:$PATH && mkdir -p out && cp arch/arm64/configs/phoenix_defconfig out/.config && make O=out ARCH=arm64 oldconfig < /dev/null 2>&1 || true && make -j$(nproc) O=out HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld HOSTCFLAGS=-fcommon KBUILD_HOSTCFLAGS=-fcommon ARCH=arm64 CC="${{ github.workspace }}/proton-clang/bin/clang" CROSS_COMPILE="${{ github.workspace }}/proton-clang/bin/aarch64-linux-gnu-" CROSS_COMPILE_ARM32="${{ github.workspace }}/proton-clang/bin/arm-linux-gnueabi-" LD="${{ github.workspace }}/proton-clang/bin/ld.lld" AR="${{ github.workspace }}/proton-clang/bin/llvm-ar" NM="${{ github.workspace }}/proton-clang/bin/llvm-nm" OBJCOPY="${{ github.workspace }}/proton-clang/bin/llvm-objcopy" OBJDUMP="${{ github.workspace }}/proton-clang/bin/llvm-objdump" STRIP="${{ github.workspace }}/proton-clang/bin/llvm-strip" Image.gz-dtb 2>&1 | tee ${{ github.workspace }}/build.log
     - name: Package
-      run: |
-        if [ -f kernel_source/out/arch/arm64/boot/Image.gz-dtb ]; then
-          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          cp kernel_source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
-          cd AnyKernel3
-          sed -i 's/device.name1=.*/device.name1=phoenix/' anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=phoenixin/' anykernel.sh
-          zip -r9 ../AnyKernel-PocoX2.zip * -x .git
-        else
-          echo "Image not found!"
-          tail -100 ../build.log
-          exit 1
-        fi
-
-    - name: Upload
-      uses: actions/upload-artifact@v4
+      run: if [ -f kernel_source/out/arch/arm64/boot/Image.gz-dtb ]; then git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3 && cp kernel_source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ && cd AnyKernel3 && sed -i 's/device.name1=.*/device.name1=phoenix/' anykernel.sh && zip -r9 ../AnyKernel-PocoX2.zip * -x .git; else echo "Image not found"; tail -100 build.log; exit 1; fi
+    - uses: actions/upload-artifact@v4
       with:
-        name: AnyKernel-PocoX2-KSUNext-SusFS
+        name: AnyKernel-PocoX2
         path: AnyKernel-PocoX2.zip
         if-no-files-found: ignore
-
-    - name: Upload build log
+    - uses: actions/upload-artifact@v4
       if: always()
-      uses: actions/upload-artifact@v4
       with:
         name: build-log
         path: build.log

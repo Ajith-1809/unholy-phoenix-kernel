@@ -20,25 +20,40 @@ jobs:
     - name: Clone toolchain
       run: git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
     - name: Clone KernelSU-Next
-      run: cd kernel_source && git clone --branch v1.1.1 --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git && rm -rf drivers/kernelsu 2>/dev/null; ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu && echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile && sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+      run: |
+        cd kernel_source
+        if [ -d "KernelSU-Next/kernel" ]; then
+          echo "KernelSU-Next already integrated in branch"
+          ln -sf ../KernelSU-Next/kernel drivers/kernelsu 2>/dev/null || cp -r KernelSU-Next/kernel drivers/kernelsu
+        else
+          git clone --branch v1.1.1 --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
+          rm -rf drivers/kernelsu 2>/dev/null
+          ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
+          grep -q kernelsu drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          grep -q kernelsu drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+        fi
     - name: Clone SusFS
-      run: git clone --depth 1 -b kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://github.com/simonpunk/susfs4ksu.git susfs4ksu || true
+      run: |
+        if [ -d "kernel_source/fs/susfs.c" ]; then
+          echo "SusFS already integrated in branch"
+        else
+          git clone --depth 1 -b kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || true
+        fi
     - name: Integrate SusFS
       run: |
         cd kernel_source
-        if [ -d ../susfs4ksu/kernel_patches ]; then
+        if [ -f "fs/susfs.c" ]; then
+          echo "SusFS already present"
+        elif [ -d "../susfs4ksu/kernel_patches" ]; then
           for p in ../susfs4ksu/kernel_patches/KernelSU-Next/*.patch; do [ -f "$p" ] && cp "$p" ./KernelSU-Next/ && cd KernelSU-Next && yes | patch -p1 --forward < "$(basename $p)" 2>/dev/null; cd ..; done
           for p in ../susfs4ksu/kernel_patches/*.patch; do [ -f "$p" ] && yes | patch -p1 -F 3 --forward < "$p" 2>/dev/null; done
           [ -d ../susfs4ksu/kernel_patches/fs ] && cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null
           [ -d ../susfs4ksu/kernel_patches/include ] && cp -r ../susfs4ksu/kernel_patches/include/* ./include/ 2>/dev/null
           [ -d ../susfs4ksu/kernel_patches/arch ] && cp -r ../susfs4ksu/kernel_patches/arch/* ./arch/ 2>/dev/null
         else
-          echo "Using SusFS files directly from repo root..."
-          [ -f ../susfs4ksu/fs/susfs.c ] && cp ../susfs4ksu/fs/susfs.c ./fs/ 2>/dev/null
-          [ -f ../susfs4ksu/include/linux/susfs.h ] && cp ../susfs4ksu/include/linux/susfs.h ./include/linux/ 2>/dev/null
-          [ -f ../susfs4ksu/include/linux/susfs_def.h ] && cp ../susfs4ksu/include/linux/susfs_def.h ./include/linux/ 2>/dev/null
+          echo "No SusFS patches available"
         fi
-        echo "SusFS integration done"
+        echo "Done"
     - name: Add SusFS Kconfig
       run: cd kernel_source && echo 'menuconfig KSU_SUSFS' >> fs/Kconfig && echo '	bool "SusFS"' >> fs/Kconfig && echo '	default n' >> fs/Kconfig && echo 'if KSU_SUSFS' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_PATH' >> fs/Kconfig && echo '	bool "Hide suspicious paths"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_MOUNT' >> fs/Kconfig && echo '	bool "Hide suspicious mounts"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_KSTAT' >> fs/Kconfig && echo '	bool "Spoof file stats"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_OVERLAYFS' >> fs/Kconfig && echo '	bool "Hide overlayfs"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_TRY_UMOUNT' >> fs/Kconfig && echo '	bool "Try unmount"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SPOOF_UNAME' >> fs/Kconfig && echo '	bool "Spoof uname"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_ENABLE_LOG' >> fs/Kconfig && echo '	bool "Enable logging"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' >> fs/Kconfig && echo '	bool "Hide symbols"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_OPEN_REDIRECT' >> fs/Kconfig && echo '	bool "Open redirect"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_SU' >> fs/Kconfig && echo '	bool "Suspicious su"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG' >> fs/Kconfig && echo '	bool "Spoof cmdline"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SELINUX_POLICY_INJECTION' >> fs/Kconfig && echo '	bool "SELinux policy injection"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'endif' >> fs/Kconfig
     - name: Configure

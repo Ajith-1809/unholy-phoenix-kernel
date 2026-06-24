@@ -22,7 +22,7 @@ jobs:
     - name: Clone KernelSU-Next
       run: cd kernel_source && git clone --branch v3.2.0 --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git && rm -rf drivers/kernelsu 2>/dev/null; ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu && echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile && sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
     - name: Clone SusFS
-      run: git clone --depth 1 -b kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://github.com/simonpunk/susfs4ksu.git susfs4ksu || true
+      run: git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://github.com/simonpunk/susfs4ksu.git susfs4ksu || true
     - name: Integrate SusFS
       run: |
         cd kernel_source
@@ -32,11 +32,11 @@ jobs:
           [ -d ../susfs4ksu/kernel_patches/fs ] && cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null
           [ -d ../susfs4ksu/kernel_patches/include ] && cp -r ../susfs4ksu/kernel_patches/include/* ./include/ 2>/dev/null
           [ -d ../susfs4ksu/kernel_patches/arch ] && cp -r ../susfs4ksu/kernel_patches/arch/* ./arch/ 2>/dev/null
-        elif [ -d ../susfs4ksu ]; then
-          echo "Using SusFS files directly..."
-          [ -d ../susfs4ksu/fs ] && cp -r ../susfs4ksu/fs/* ./fs/ 2>/dev/null
-          [ -d ../susfs4ksu/include ] && cp -r ../susfs4ksu/include/* ./include/ 2>/dev/null
-          [ -d ../susfs4ksu/arch ] && cp -r ../susfs4ksu/arch/* ./arch/ 2>/dev/null
+        else
+          echo "Using SusFS files directly from repo root..."
+          [ -f ../susfs4ksu/fs/susfs.c ] && cp ../susfs4ksu/fs/susfs.c ./fs/ 2>/dev/null
+          [ -f ../susfs4ksu/include/linux/susfs.h ] && cp ../susfs4ksu/include/linux/susfs.h ./include/linux/ 2>/dev/null
+          [ -f ../susfs4ksu/include/linux/susfs_def.h ] && cp ../susfs4ksu/include/linux/susfs_def.h ./include/linux/ 2>/dev/null
         fi
         echo "SusFS integration done"
     - name: Add SusFS Kconfig

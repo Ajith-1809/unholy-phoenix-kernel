@@ -16,36 +16,26 @@ jobs:
     - name: Setup
       run: sudo apt-get update -y && sudo apt-get install -y build-essential bc bison flex curl git zip unzip libssl-dev libelf-dev cpio libncurses-dev wget python3 gcc g++ clang lld llvm device-tree-compiler rsync gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu
     - name: Clone kernel
-      run: git clone --depth 1 -b Unholy_KSUN+SUSFS https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source || git clone --depth 1 -b Unholy https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
+      run: git clone --depth 1 -b Unholy https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
     - name: Clone toolchain
       run: git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
-    - name: Clone KernelSU-Next
+    - name: Clone KernelSU
       run: |
         cd kernel_source
-        if [ -d "KernelSU-Next/kernel" ]; then
-          echo "KernelSU-Next already integrated in branch"
-          ln -sf ../KernelSU-Next/kernel drivers/kernelsu 2>/dev/null || cp -r KernelSU-Next/kernel drivers/kernelsu
-        else
-          git clone --branch v1.1.1 --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
-          rm -rf drivers/kernelsu 2>/dev/null
-          ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
-          grep -q kernelsu drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-          grep -q kernelsu drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-        fi
+        git clone --depth 1 https://github.com/tiann/KernelSU.git
+        rm -rf drivers/kernelsu 2>/dev/null
+        ln -sf ../KernelSU/kernel drivers/kernelsu || cp -r KernelSU/kernel drivers/kernelsu
+        grep -q kernelsu drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+        grep -q kernelsu drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
     - name: Clone SusFS
-      run: |
-        if [ -d "kernel_source/fs/susfs.c" ]; then
-          echo "SusFS already integrated in branch"
-        else
-          git clone --depth 1 -b kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || true
-        fi
+      run: git clone --depth 1 -b kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 -b kernel-4.14 https://github.com/simonpunk/susfs4ksu.git susfs4ksu || true
     - name: Integrate SusFS
       run: |
         cd kernel_source
         if [ -f "fs/susfs.c" ]; then
           echo "SusFS already present"
         elif [ -d "../susfs4ksu/kernel_patches" ]; then
-          for p in ../susfs4ksu/kernel_patches/KernelSU-Next/*.patch; do [ -f "$p" ] && cp "$p" ./KernelSU-Next/ && cd KernelSU-Next && yes | patch -p1 --forward < "$(basename $p)" 2>/dev/null; cd ..; done
+          for p in ../susfs4ksu/kernel_patches/KernelSU/*.patch; do [ -f "$p" ] && cp "$p" ./KernelSU/ && cd KernelSU && yes | patch -p1 --forward < "$(basename $p)" 2>/dev/null; cd ..; done
           for p in ../susfs4ksu/kernel_patches/*.patch; do [ -f "$p" ] && yes | patch -p1 -F 3 --forward < "$p" 2>/dev/null; done
           [ -d ../susfs4ksu/kernel_patches/fs ] && cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null
           [ -d ../susfs4ksu/kernel_patches/include ] && cp -r ../susfs4ksu/kernel_patches/include/* ./include/ 2>/dev/null

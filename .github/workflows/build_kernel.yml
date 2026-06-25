@@ -72,11 +72,8 @@ jobs:
         cd kernel_source
         if ! grep -q "TASK_STRUCT_PROC_UMOUNTED" include/linux/susfs_def.h; then
           sed -i '/TASK_STRUCT_NON_ROOT_USER_APP_PROC/a #define TASK_STRUCT_PROC_UMOUNTED BIT(25)' include/linux/susfs_def.h
-          echo "Added TASK_STRUCT_PROC_UMOUNTED flag"
-        fi
-        if ! grep -q "susfs_set_current_proc_umounted" include/linux/susfs.h; then
-          printf '\n/* proc_umounted stubs for KSU-Next legacy-susfs compatibility */\nstatic inline void susfs_set_current_proc_umounted(void) {\n    current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED;\n}\nstatic inline bool susfs_is_current_proc_umounted(void) {\n    return !!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED);\n}\n' >> include/linux/susfs.h
-          echo "Added susfs_set_current_proc_umounted stubs to susfs.h"
+          printf '#define susfs_set_current_proc_umounted() do { current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED; } while(0)\n#define susfs_is_current_proc_umounted() (!!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED))\n' >> include/linux/susfs_def.h
+          echo "Added TASK_STRUCT_PROC_UMOUNTED flag and stubs"
         fi
     - name: Apply KSU Kconfig from SusFS
       run: |

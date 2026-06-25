@@ -33,7 +33,6 @@ jobs:
         cd kernel_source
         cp ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.14.patch ./
         patch -p1 -F3 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || true
-        echo "Patch done"
     - name: Copy SusFS source files
       run: |
         cd kernel_source
@@ -64,26 +63,16 @@ jobs:
           sed -i '/TASK_STRUCT_NON_ROOT_USER_APP_PROC/a #define TASK_STRUCT_PROC_UMOUNTED BIT(25)' include/linux/susfs_def.h
           printf '#define susfs_set_current_proc_umounted() do { current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED; } while(0)\n#define susfs_is_current_proc_umounted() (!!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED))\n' >> include/linux/susfs_def.h
         fi
-    - name: Create bridge functions
+    - name: Create proper bridge functions
       run: |
         cd kernel_source
-        printf '#include <linux/version.h>\n#include <linux/fs.h>\n#include <linux/namei.h>\n#include <linux/path.h>\n#include <linux/cred.h>\n#include <linux/sched.h>\n#include <linux/mount.h>\n#include <linux/syscalls.h>\nextern void escape_with_root_profile(void);\nbool susfs_is_current_ksu_domain(void) {\n    return false;\n}\nbool susfs_is_current_zygote_domain(void) {\n    return false;\n}\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nvoid ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid) {\n    struct path path;\n    char *kname;\n    if (kern_path(mnt, 0, &path)) return;\n    if (check_mnt && path.dentry != path.mnt->mnt_root) { path_put(&path); return; }\n    path_put(&path);\n    kname = kstrdup(mnt, GFP_KERNEL);\n    if (kname) {\n        mm_segment_t old_fs = get_fs();\n        set_fs(KERNEL_DS);\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)\n        ksys_umount(kname, flags);\n#else\n        sys_umount(kname, flags);\n#endif\n        set_fs(old_fs);\n        kfree(kname);\n    }\n}\n#endif\n#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT\nvoid susfs_try_umount_all(uid_t uid) {\n    ksu_try_umount(\"/system\", true, 0, uid);\n    ksu_try_umount(\"/system_ext\", true, 0, uid);\n    ksu_try_umount(\"/vendor\", true, 0, uid);\n    ksu_try_umount(\"/product\", true, 0, uid);\n    ksu_try_umount(\"/odm\", true, 0, uid);\n}\n#endif\n#ifdef CONFIG_KSU_SUSFS_SUS_SU\nvoid ksu_susfs_enable_sus_su(void) { pr_info(\"susfs: sus_su enabled\\n\"); }\nvoid ksu_susfs_disable_sus_su(void) { pr_info(\"susfs: sus_su disabled\\n\"); }\n#endif\nvoid ksu_escape_to_root(void) { escape_with_root_profile(); }\n' > drivers/kernelsu/susfs_bridge.c
+        printf '#include <linux/version.h>\n#include <linux/fs.h>\n#include <linux/namei.h>\n#include <linux/path.h>\n#include <linux/cred.h>\n#include <linux/sched.h>\n#include <linux/syscalls.h>\n#include "selinux/selinux.h"\n#include "policy/app_profile.h"\n\n/* Proper bridge: use KSU-Next v3.2.0 SELinux functions */\nbool susfs_is_current_ksu_domain(void) {\n    return is_ksu_domain();\n}\nbool susfs_is_current_zygote_domain(void) {\n    return is_zygote(current_cred());\n}\n\n/* Proper ksu_try_umount: same logic as KSU-Next kernel_umount.c */\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nvoid ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid) {\n    struct path path;\n    int err = kern_path(mnt, 0, &path);\n    if (err) return;\n    if (check_mnt && path.dentry != path.mnt->mnt_root) {\n        path_put(&path);\n        return;\n    }\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_HAS_PATH_UMOUNT)\n    extern int path_umount(struct path *path, int flags);\n    err = path_umount(&path, flags);\n#else\n    path_put(&path);\n    {\n        char __user *usermnt = (char __user *)mnt;\n        mm_segment_t old_fs = get_fs();\n        set_fs(KERNEL_DS);\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)\n        ksys_umount(usermnt, flags);\n#else\n        sys_umount(usermnt, flags);\n#endif\n        set_fs(old_fs);\n    }\n    return;\n#endif\n    if (err) pr_warn(\"susfs: umount %s failed: %d\\n\", mnt, err);\n}\n#endif\n\n/* susfs_try_umount_all: unmount standard KSU mount paths */\n#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT\nvoid susfs_try_umount_all(uid_t uid) {\n    extern void susfs_try_umount(uid_t uid);\n    susfs_try_umount(uid);\n    ksu_try_umount(\"/system\", true, 0, uid);\n    ksu_try_umount(\"/system_ext\", true, 0, uid);\n    ksu_try_umount(\"/vendor\", true, 0, uid);\n    ksu_try_umount(\"/product\", true, 0, uid);\n    ksu_try_umount(\"/odm\", true, 0, uid);\n    ksu_try_umount(\"/data/adb/modules\", false, MNT_DETACH, uid);\n    ksu_try_umount(\"/debug_ramdisk\", true, MNT_DETACH, uid);\n}\n#endif\n\n/* sus_su stubs */\n#ifdef CONFIG_KSU_SUSFS_SUS_SU\nstatic bool ksu_susfs_sus_su_enabled = false;\nvoid ksu_susfs_enable_sus_su(void) { ksu_susfs_sus_su_enabled = true; }\nvoid ksu_susfs_disable_sus_su(void) { ksu_susfs_sus_su_enabled = false; }\n#endif\n\n/* escape to root */\nvoid ksu_escape_to_root(void) {\n    escape_with_root_profile();\n}\n' > drivers/kernelsu/susfs_bridge.c
         echo "Created susfs_bridge.c"
     - name: Add bridge to Kbuild
       run: |
         cd kernel_source
         if ! grep -q "susfs_bridge.o" drivers/kernelsu/Kbuild; then
           sed -i '/kernelsu-objs += extras.o/a kernelsu-objs += susfs_bridge.o' drivers/kernelsu/Kbuild
-        fi
-    - name: Manually backport path_umount
-      run: |
-        cd kernel_source
-        if ! grep -q "^int path_umount" fs/namespace.c; then
-          printf '\nint path_umount(struct path *path, int flags)\n{\n\tstruct mount *mnt = real_mount(path->mnt);\n\tint ret = do_umount(mnt, flags);\n\tdput(path->dentry);\n\tmntput_no_expire(mnt);\n\treturn ret;\n}\n' >> fs/namespace.c
-          echo "Added path_umount to namespace.c"
-        fi
-        if ! grep -q "int path_umount" fs/internal.h; then
-          sed -i '/^extern void __init mnt_init/a int path_umount(struct path *path, int flags);' fs/internal.h
         fi
     - name: Add SusFS Kconfig
       run: |

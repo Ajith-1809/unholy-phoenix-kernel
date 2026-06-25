@@ -75,6 +75,16 @@ jobs:
         if ! grep -q "susfs_bridge.o" drivers/kernelsu/Kbuild; then
           sed -i '/kernelsu-objs += extras.o/a kernelsu-objs += susfs_bridge.o' drivers/kernelsu/Kbuild
         fi
+    - name: Manually backport path_umount
+      run: |
+        cd kernel_source
+        if ! grep -q "^int path_umount" fs/namespace.c; then
+          printf '\nint path_umount(struct path *path, int flags)\n{\n\tstruct mount *mnt = real_mount(path->mnt);\n\tint ret;\n\tret = can_umount(path, flags);\n\tif (!ret)\n\t\tret = do_umount(mnt, flags);\n\tdput(path->dentry);\n\tmntput_no_expire(mnt);\n\treturn ret;\n}\n' >> fs/namespace.c
+          echo "Added path_umount to namespace.c"
+        fi
+        if ! grep -q "int path_umount" fs/internal.h; then
+          sed -i '/^extern void __init mnt_init/a int path_umount(struct path *path, int flags);' fs/internal.h
+        fi
     - name: Add SusFS Kconfig
       run: |
         cd kernel_source

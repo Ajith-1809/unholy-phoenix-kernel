@@ -30,8 +30,9 @@ jobs:
         cd kernel_source
         rm -rf KernelSU-Next
         git clone --branch v3.2.0-legacy --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
-        # v3.2.0-legacy needs hook config that the old version didn't
-        echo 'CONFIG_KSU_KPROBES_HOOK=y' >> arch/arm64/configs/phoenix_defconfig
+        # v3.2.0-legacy needs hook config
+        sed -i '/^CONFIG_KSU/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
+        printf '\nCONFIG_KPROBES=y\nCONFIG_KRETPROBES=y\nCONFIG_KSU=y\nCONFIG_KSU_KPROBES_HOOK=y\n' >> arch/arm64/configs/phoenix_defconfig
         echo "KSU-Next v3.2.0-legacy cloned, hooks configured"
     - name: Check what hooks KSU-Next v3.2.0-legacy needs
       run: |

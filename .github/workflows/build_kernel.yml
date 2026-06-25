@@ -18,15 +18,15 @@ jobs:
       run: git clone --depth 1 -b Unholy https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
     - name: Clone toolchain
       run: git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
-    - name: Clone KernelSU-Next legacy-susfs
+    - name: Clone KernelSU-Next v3.2.0-legacy
       run: |
         cd kernel_source
-        git clone --branch v3.1.0-legacy-susfs --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
+        git clone --branch v3.2.0-legacy --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
         rm -rf drivers/kernelsu 2>/dev/null
         ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
         echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
         sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-    - name: Clone SusFS
+    - name: Clone SusFS kernel-4.14
       run: git clone --depth 1 -b kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || true
     - name: Apply SusFS kernel patch
       run: |
@@ -34,72 +34,42 @@ jobs:
         cp ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.14.patch ./
         patch -p1 -F3 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || true
         echo "Patch application done"
-    - name: Copy SusFS files
+    - name: Copy SusFS source files
       run: |
         cd kernel_source
         cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null || true
         cp -r ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/ 2>/dev/null || true
         echo "SusFS files copied"
-    - name: Ensure fs/Makefile has susfs.o
+    - name: Ensure fs/Makefile compiles susfs
       run: |
         cd kernel_source
         if ! grep -q "susfs.o" fs/Makefile; then
           sed -i '/^obj-y.*nsfs.o/a obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
-          echo "Added susfs.o to fs/Makefile"
-        else
-          echo "fs/Makefile already has susfs.o"
         fi
     - name: Ensure task_struct has susfs fields
       run: |
         cd kernel_source
         if ! grep -q "susfs_task_state" include/linux/sched.h; then
           sed -i '/randomized_struct_fields_end/i #ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_task_state;\n\tu64 susfs_last_fake_mnt_id;\n#endif' include/linux/sched.h
-          echo "Added susfs fields to task_struct"
-        else
-          echo "task_struct already has susfs fields"
         fi
     - name: Ensure mount.h has susfs field
       run: |
         cd kernel_source
         if ! grep -q "susfs_mnt_id_backup" include/linux/mount.h; then
           sed -i '/void \*data;/a #ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_mnt_id_backup;\n#endif' include/linux/mount.h
-          echo "Added susfs_mnt_id_backup to vfsmount"
-        else
-          echo "mount.h already has susfs field"
         fi
-    - name: Add susfs_set_current_proc_umounted stubs
-      run: |
-        cd kernel_source
-        if ! grep -q "TASK_STRUCT_PROC_UMOUNTED" include/linux/susfs_def.h; then
-          sed -i '/TASK_STRUCT_NON_ROOT_USER_APP_PROC/a #define TASK_STRUCT_PROC_UMOUNTED BIT(25)' include/linux/susfs_def.h
-          printf '#define susfs_set_current_proc_umounted() do { current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED; } while(0)\n#define susfs_is_current_proc_umounted() (!!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED))\n' >> include/linux/susfs_def.h
-          echo "Added TASK_STRUCT_PROC_UMOUNTED flag and stubs"
-        fi
-    - name: Apply KSU Kconfig from SusFS
-      run: |
-        cd kernel_source
-        cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/ 2>/dev/null || true
-        if [ -f KernelSU/10_enable_susfs_for_ksu.patch ]; then
-          cd KernelSU
-          patch -p1 --forward < 10_enable_susfs_for_ksu.patch 2>&1 || echo "WARN: KSU Kconfig patch may have partial failures"
-        fi
-        echo "KSU Kconfig done"
-    - name: Add SusFS Kconfig to fs
+    - name: Add SusFS Kconfig
       run: |
         cd kernel_source
         if ! grep -q "KSU_SUSFS" fs/Kconfig; then
           printf 'menuconfig KSU_SUSFS\n\tbool "SusFS"\n\tdefault n\nif KSU_SUSFS\nconfig KSU_SUSFS_SUS_PATH\n\tbool "Hide suspicious paths"\n\tdefault y\nconfig KSU_SUSFS_SUS_MOUNT\n\tbool "Hide suspicious mounts"\n\tdefault y\nconfig KSU_SUSFS_SUS_KSTAT\n\tbool "Spoof file stats"\n\tdefault y\nconfig KSU_SUSFS_SUS_OVERLAYFS\n\tbool "Hide overlayfs"\n\tdefault y\nconfig KSU_SUSFS_TRY_UMOUNT\n\tbool "Try unmount"\n\tdefault y\nconfig KSU_SUSFS_SPOOF_UNAME\n\tbool "Spoof uname"\n\tdefault y\nconfig KSU_SUSFS_ENABLE_LOG\n\tbool "Enable logging"\n\tdefault y\nconfig KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS\n\tbool "Hide symbols"\n\tdefault y\nconfig KSU_SUSFS_OPEN_REDIRECT\n\tbool "Open redirect"\n\tdefault y\nconfig KSU_SUSFS_SUS_SU\n\tbool "Suspicious su"\n\tdefault y\nconfig KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG\n\tbool "Spoof cmdline"\n\tdefault y\nconfig KSU_SUSFS_SELINUX_POLICY_INJECTION\n\tbool "SELinux policy injection"\n\tdefault y\nendif\n' >> fs/Kconfig
-          echo "Added SusFS Kconfig"
-        else
-          echo "SusFS Kconfig already present"
         fi
-    - name: Configure
+    - name: Configure defconfig
       run: |
         cd kernel_source
         sed -i '/^CONFIG_KSU/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
         sed -i '/^CONFIG_SECURITY_SELINUX/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
         printf '\nCONFIG_KPROBES=y\nCONFIG_KSU=y\nCONFIG_KSU_SUSFS=y\nCONFIG_KSU_SUSFS_SUS_PATH=y\nCONFIG_KSU_SUSFS_SUS_MOUNT=y\nCONFIG_KSU_SUSFS_SUS_KSTAT=y\nCONFIG_KSU_SUSFS_SUS_OVERLAYFS=y\nCONFIG_KSU_SUSFS_TRY_UMOUNT=y\nCONFIG_KSU_SUSFS_SPOOF_UNAME=y\nCONFIG_KSU_SUSFS_ENABLE_LOG=y\nCONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y\nCONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y\nCONFIG_KSU_SUSFS_OPEN_REDIRECT=y\nCONFIG_KSU_SUSFS_SUS_SU=y\nCONFIG_KSU_SUSFS_SELINUX_POLICY_INJECTION=y\nCONFIG_SECURITY_SELINUX=y\n' >> arch/arm64/configs/phoenix_defconfig
-        echo "Defconfig updated"
     - name: Build
       run: |
         cd kernel_source

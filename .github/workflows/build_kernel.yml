@@ -14,38 +14,18 @@ jobs:
       run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc && docker image prune -af
     - name: Setup
       run: sudo apt-get update -y && sudo apt-get install -y build-essential bc bison flex curl git zip unzip libssl-dev libelf-dev cpio libncurses-dev wget python3 gcc g++ clang lld llvm device-tree-compiler rsync gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu
-    - name: Clone kernel
+    - name: Clone kernel (Unholy_KSUN+SUSFS as-is)
       run: git clone --depth 1 -b Unholy_KSUN+SUSFS https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
+    - name: Check existing KSU-Next version
+      run: |
+        cd kernel_source
+        echo "=== KSU-Next in branch ==="
+        cat KernelSU-Next/kernel/Kbuild 2>/dev/null | head -5
+        grep "KSU_VERSION" KernelSU-Next/kernel/Kbuild 2>/dev/null | head -3 || true
+        echo "=== Git remote of KernelSU-Next ==="
+        cd KernelSU-Next && git remote -v 2>/dev/null && git log --oneline -1 2>/dev/null || echo "Not a git repo"
     - name: Clone toolchain
       run: git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
-    - name: Check KSU-Next version in branch
-      run: |
-        cd kernel_source
-        echo "=== KSU-Next version check ==="
-        head -5 KernelSU-Next/kernel/Kbuild 2>/dev/null || echo "No Kbuild"
-        grep -r "KSU_VERSION" KernelSU-Next/kernel/Kbuild 2>/dev/null | head -5 || true
-        ls drivers/kernelsu 2>/dev/null || echo "No drivers/kernelsu"
-    - name: Update KSU-Next to v3.2.0-legacy
-      run: |
-        cd kernel_source
-        rm -rf KernelSU-Next
-        git clone --branch v3.2.0-legacy --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
-        # v3.2.0-legacy needs hook config
-        sed -i '/^CONFIG_KSU/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
-        printf '\nCONFIG_KPROBES=y\nCONFIG_KRETPROBES=y\nCONFIG_KSU=y\nCONFIG_KSU_KPROBES_HOOK=y\n' >> arch/arm64/configs/phoenix_defconfig
-        echo "KSU-Next v3.2.0-legacy cloned, hooks configured"
-    - name: Check what hooks KSU-Next v3.2.0-legacy needs
-      run: |
-        cd kernel_source
-        echo "=== Checking Kbuild hook requirements ==="
-        grep -n "HAVE_KSU_HOOK\|ksu_handle_sys_reboot\|KPROBES_HOOK\|MANUAL_HOOK\|CONFIG_KSU_KPROBES" KernelSU-Next/kernel/Kbuild | head -20
-    - name: Create bridge for old KernelSU hooks
-      run: |
-        cd kernel_source
-        printf '#include <linux/fs.h>\n#include <linux/version.h>\nextern int escape_with_root_profile(void);\nvoid ksu_vfs_read_hook(struct file *file, char __user *buf, size_t count, loff_t *pos) {}\nint ksu_handle_vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos) { return 0; }\nint ksu_execveat_hook(int *fd, struct filename **filename_ptr) { return 0; }\nvoid ksu_input_hook(void *data, unsigned int *code, int *value) {}\nvoid ksu_escape_to_root(void) { escape_with_root_profile(); }\n' > drivers/kernelsu/susfs_bridge.c
-        if ! grep -q "susfs_bridge.o" drivers/kernelsu/Kbuild; then
-          sed -i '/kernelsu-objs += extras.o/a kernelsu-objs += susfs_bridge.o' drivers/kernelsu/Kbuild
-        fi
     - name: Build
       run: |
         cd kernel_source

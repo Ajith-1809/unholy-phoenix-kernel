@@ -21,7 +21,7 @@ jobs:
     - name: Clone KernelSU-Next legacy-susfs
       run: |
         cd kernel_source
-        git clone --branch legacy-susfs --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
+        git clone --branch v3.1.0-legacy-susfs --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
         rm -rf drivers/kernelsu 2>/dev/null
         ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
         echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile

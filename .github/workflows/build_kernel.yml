@@ -14,45 +14,29 @@ jobs:
       run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc && docker image prune -af
     - name: Setup
       run: sudo apt-get update -y && sudo apt-get install -y build-essential bc bison flex curl git zip unzip libssl-dev libelf-dev cpio libncurses-dev wget python3 gcc g++ clang lld llvm device-tree-compiler rsync gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu
-    - name: Clone kernel (Unholy_KSUN+SUSFS - already has SusFS integrated)
+    - name: Clone kernel
       run: git clone --depth 1 -b Unholy_KSUN+SUSFS https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
     - name: Clone toolchain
       run: git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
-    - name: Replace original KernelSU with KSU-Next v3.2.0-legacy
+    - name: Check KSU-Next version in branch
       run: |
         cd kernel_source
-        rm -rf drivers/kernelsu
-        rm -rf KernelSU KernelSU-Next
-        git clone --branch v3.2.0-legacy --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
-        ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
-        if ! grep -q "kernelsu" drivers/Makefile; then
-          echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-        fi
-        if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
-          sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-        fi
-    - name: Create bridge for KSU-Next <-> SusFS
+        echo "=== KSU-Next version check ==="
+        head -5 KernelSU-Next/kernel/Kbuild 2>/dev/null || echo "No Kbuild"
+        grep -r "KSU_VERSION" KernelSU-Next/kernel/Kbuild 2>/dev/null | head -5 || true
+        ls drivers/kernelsu 2>/dev/null || echo "No drivers/kernelsu"
+    - name: Update KSU-Next to v3.2.0-legacy
       run: |
         cd kernel_source
-        printf '#include <linux/version.h>\n#include <linux/fs.h>\n#include <linux/mount.h>\n#include <linux/namei.h>\n#include <linux/path.h>\n#include <linux/cred.h>\n#include <linux/sched.h>\n#include <linux/syscalls.h>\n#include "selinux/selinux.h"\n#include "policy/app_profile.h"\n\nbool susfs_is_current_ksu_domain(void) {\n    return is_ksu_domain();\n}\nbool susfs_is_current_zygote_domain(void) {\n    return is_zygote(current_cred());\n}\n\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nvoid ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid) {\n    struct path path;\n    int err = kern_path(mnt, 0, &path);\n    if (err) return;\n    if (check_mnt && path.dentry != path.mnt->mnt_root) {\n        path_put(&path);\n        return;\n    }\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0) || defined(KSU_HAS_PATH_UMOUNT)\n    extern int path_umount(struct path *path, int flags);\n    err = path_umount(&path, flags);\n    if (err) pr_warn("susfs: umount %s failed: %d\\n", mnt, err);\n#else\n    path_put(&path);\n    {\n        char __user *usermnt = (char __user *)mnt;\n        mm_segment_t old_fs = get_fs();\n        set_fs(KERNEL_DS);\n#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)\n        ksys_umount(usermnt, flags);\n#else\n        sys_umount(usermnt, flags);\n#endif\n        set_fs(old_fs);\n    }\n#endif\n}\n#endif\n\n#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT\nvoid susfs_try_umount_all(uid_t uid) {\n    extern void susfs_try_umount(uid_t uid);\n    susfs_try_umount(uid);\n    ksu_try_umount("/system", true, 0, uid);\n    ksu_try_umount("/system_ext", true, 0, uid);\n    ksu_try_umount("/vendor", true, 0, uid);\n    ksu_try_umount("/product", true, 0, uid);\n    ksu_try_umount("/odm", true, 0, uid);\n    ksu_try_umount("/data/adb/modules", false, MNT_DETACH, uid);\n    ksu_try_umount("/debug_ramdisk", true, MNT_DETACH, uid);\n}\n#endif\n\n#ifdef CONFIG_KSU_SUSFS_SUS_SU\nstatic bool ksu_susfs_sus_su_enabled = false;\nvoid ksu_susfs_enable_sus_su(void) { ksu_susfs_sus_su_enabled = true; }\nvoid ksu_susfs_disable_sus_su(void) { ksu_susfs_sus_su_enabled = false; }\n#endif\n\nvoid ksu_escape_to_root(void) {\n    escape_with_root_profile();\n}\n\n/* Stubs for original KernelSU hooks still in kernel source */\nvoid ksu_vfs_read_hook(struct file *file, char __user *buf, size_t count, loff_t *pos) {}\nint ksu_handle_vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos) { return 0; }\nint ksu_execveat_hook(int *fd, struct filename **filename_ptr) { return 0; }\nvoid ksu_input_hook(void *data, unsigned int *code, int *value) {}\n' > drivers/kernelsu/susfs_bridge.c
-        if ! grep -q "susfs_bridge.o" drivers/kernelsu/Kbuild; then
-          sed -i '/kernelsu-objs += extras.o/a kernelsu-objs += susfs_bridge.o' drivers/kernelsu/Kbuild
-        fi
-        echo "Bridge created and added to Kbuild"
-    - name: Add SusFS proc_umounted stubs
+        # Backup the existing KernelSU-Next
+        rm -rf KernelSU-Next
+        git clone --branch v3.2.0-legacy --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+        echo "KSU-Next v3.2.0-legacy cloned"
+    - name: Check what hooks KSU-Next v3.2.0-legacy needs
       run: |
         cd kernel_source
-        if ! grep -q "TASK_STRUCT_PROC_UMOUNTED" include/linux/susfs_def.h; then
-          sed -i '/TASK_STRUCT_NON_ROOT_USER_APP_PROC/a #define TASK_STRUCT_PROC_UMOUNTED BIT(25)' include/linux/susfs_def.h
-          printf '#define susfs_set_current_proc_umounted() do { current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED; } while(0)\n#define susfs_is_current_proc_umounted() (!!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED))\n' >> include/linux/susfs_def.h
-        fi
-    - name: Ensure Kconfig has KSU_SUSFS
-      run: |
-        cd kernel_source
-        sed -i '/^CONFIG_KSU/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
-        if ! grep -q "CONFIG_KSU_SUSFS" arch/arm64/configs/phoenix_defconfig; then
-          printf '\nCONFIG_KPROBES=y\nCONFIG_KRETPROBES=y\nCONFIG_KSU=y\nCONFIG_KSU_KPROBES_HOOK=y\nCONFIG_KSU_SUSFS=y\nCONFIG_KSU_SUSFS_SUS_PATH=y\nCONFIG_KSU_SUSFS_SUS_MOUNT=y\nCONFIG_KSU_SUSFS_SUS_KSTAT=y\nCONFIG_KSU_SUSFS_SUS_OVERLAYFS=y\nCONFIG_KSU_SUSFS_TRY_UMOUNT=y\nCONFIG_KSU_SUSFS_SPOOF_UNAME=y\nCONFIG_KSU_SUSFS_ENABLE_LOG=y\nCONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y\nCONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y\nCONFIG_KSU_SUSFS_OPEN_REDIRECT=y\nCONFIG_KSU_SUSFS_SUS_SU=y\nCONFIG_KSU_SUSFS_SELINUX_POLICY_INJECTION=y\n' >> arch/arm64/configs/phoenix_defconfig
-        fi
+        echo "=== Checking Kbuild hook requirements ==="
+        grep -n "HAVE_KSU_HOOK\|ksu_handle_sys_reboot\|KPROBES_HOOK\|MANUAL_HOOK\|CONFIG_KSU_KPROBES" KernelSU-Next/kernel/Kbuild | head -20
     - name: Build
       run: |
         cd kernel_source

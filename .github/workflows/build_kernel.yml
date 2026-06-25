@@ -39,6 +39,13 @@ jobs:
         cd kernel_source
         echo "=== Checking Kbuild hook requirements ==="
         grep -n "HAVE_KSU_HOOK\|ksu_handle_sys_reboot\|KPROBES_HOOK\|MANUAL_HOOK\|CONFIG_KSU_KPROBES" KernelSU-Next/kernel/Kbuild | head -20
+    - name: Create bridge for old KernelSU hooks
+      run: |
+        cd kernel_source
+        printf '#include <linux/fs.h>\n#include <linux/version.h>\nextern int escape_with_root_profile(void);\nvoid ksu_vfs_read_hook(struct file *file, char __user *buf, size_t count, loff_t *pos) {}\nint ksu_handle_vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos) { return 0; }\nint ksu_execveat_hook(int *fd, struct filename **filename_ptr) { return 0; }\nvoid ksu_input_hook(void *data, unsigned int *code, int *value) {}\nvoid ksu_escape_to_root(void) { escape_with_root_profile(); }\n' > drivers/kernelsu/susfs_bridge.c
+        if ! grep -q "susfs_bridge.o" drivers/kernelsu/Kbuild; then
+          sed -i '/kernelsu-objs += extras.o/a kernelsu-objs += susfs_bridge.o' drivers/kernelsu/Kbuild
+        fi
     - name: Build
       run: |
         cd kernel_source

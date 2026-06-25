@@ -28,10 +28,11 @@ jobs:
     - name: Update KSU-Next to v3.2.0-legacy
       run: |
         cd kernel_source
-        # Backup the existing KernelSU-Next
         rm -rf KernelSU-Next
         git clone --branch v3.2.0-legacy --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
-        echo "KSU-Next v3.2.0-legacy cloned"
+        # v3.2.0-legacy needs hook config that the old version didn't
+        echo 'CONFIG_KSU_KPROBES_HOOK=y' >> arch/arm64/configs/phoenix_defconfig
+        echo "KSU-Next v3.2.0-legacy cloned, hooks configured"
     - name: Check what hooks KSU-Next v3.2.0-legacy needs
       run: |
         cd kernel_source

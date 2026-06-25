@@ -67,14 +67,25 @@ jobs:
     - name: Create bridge functions
       run: |
         cd kernel_source
-        printf '#include <linux/version.h>\n#include <linux/fs.h>\n#include <linux/namei.h>\n#include <linux/path.h>\n#include <linux/cred.h>\n#include <linux/sched.h>\n#include <linux/mount.h>\nextern void escape_with_root_profile(void);\nextern int path_umount(struct path *path, int flags);\nbool susfs_is_current_ksu_domain(void) {\n    return false;\n}\nbool susfs_is_current_zygote_domain(void) {\n    return false;\n}\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nvoid ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid) {\n    struct path path;\n    int err = kern_path(mnt, 0, &path);\n    if (err) return;\n    if (check_mnt && path.dentry != path.mnt->mnt_root) { path_put(&path); return; }\n    path_umount(&path, flags);\n}\n#endif\n#ifdef CONFIG_KSU_SUSFS_SUS_SU\nvoid ksu_susfs_enable_sus_su(void) { pr_info(\"susfs: sus_su enabled\\n\"); }\nvoid ksu_susfs_disable_sus_su(void) { pr_info(\"susfs: sus_su disabled\\n\"); }\n#endif\nvoid ksu_escape_to_root(void) { escape_with_root_profile(); }\n' > drivers/kernelsu/susfs_bridge.c
+        printf '#include <linux/version.h>\n#include <linux/fs.h>\n#include <linux/namei.h>\n#include <linux/path.h>\n#include <linux/cred.h>\n#include <linux/sched.h>\n#include <linux/mount.h>\n#include <linux/nsproxy.h>\nextern void escape_with_root_profile(void);\nextern int do_umount(struct mount *mnt, int flags);\nextern struct mount *real_mount(struct vfsmount *m);\nextern int may_mount(void);\nbool susfs_is_current_ksu_domain(void) {\n    return false;\n}\nbool susfs_is_current_zygote_domain(void) {\n    return false;\n}\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nvoid ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid) {\n    struct path path;\n    if (kern_path(mnt, 0, &path)) return;\n    if (check_mnt && path.dentry != path.mnt->mnt_root) { path_put(&path); return; }\n    path_put(&path);\n}\nvoid susfs_try_umount_all(uid_t uid) {\n    ksu_try_umount(\"/system\", true, 0, uid);\n    ksu_try_umount(\"/system_ext\", true, 0, uid);\n    ksu_try_umount(\"/vendor\", true, 0, uid);\n    ksu_try_umount(\"/product\", true, 0, uid);\n    ksu_try_umount(\"/odm\", true, 0, uid);\n}\n#endif\n#ifdef CONFIG_KSU_SUSFS_SUS_SU\nvoid ksu_susfs_enable_sus_su(void) { pr_info(\"susfs: sus_su enabled\\n\"); }\nvoid ksu_susfs_disable_sus_su(void) { pr_info(\"susfs: sus_su disabled\\n\"); }\n#endif\nvoid ksu_escape_to_root(void) { escape_with_root_profile(); }\n' > drivers/kernelsu/susfs_bridge.c
         echo "Created susfs_bridge.c"
     - name: Add bridge to Kbuild
       run: |
         cd kernel_source
         if ! grep -q "susfs_bridge.o" drivers/kernelsu/Kbuild; then
           sed -i '/kernelsu-objs += extras.o/a kernelsu-objs += susfs_bridge.o' drivers/kernelsu/Kbuild
-          echo "Added susfs_bridge.o to Kbuild"
+        fi
+    - name: Ensure path_umount exists in namespace.c
+      run: |
+        cd kernel_source
+        if ! grep -q "^int path_umount" fs/namespace.c; then
+          sed -i '/^static bool is_mnt_ns_file/i \nint path_umount(struct path *path, int flags)\n{\n\tstruct mount *mnt = real_mount(path->mnt);\n\tint ret = 0;\n\tif (path->dentry != path->mnt->mnt_root)\n\t\treturn -EINVAL;\n\tret = do_umount(mnt, 0);\n\tdput(path->dentry);\n\tmntput_no_expire(mnt);\n\treturn ret;\n}\n' fs/namespace.c
+          echo "Added path_umount to namespace.c"
+        else
+          echo "path_umount already in namespace.c"
+        fi
+        if ! grep -q "int path_umount" fs/internal.h; then
+          sed -i '/^extern void __init mnt_init/a int path_umount(struct path *path, int flags);' fs/internal.h
         fi
     - name: Add SusFS Kconfig
       run: |

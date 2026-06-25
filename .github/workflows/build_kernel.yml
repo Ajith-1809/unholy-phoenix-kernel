@@ -18,10 +18,10 @@ jobs:
       run: git clone --depth 1 -b Unholy https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
     - name: Clone toolchain
       run: git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
-    - name: Clone KernelSU-Next v3.2.0-legacy
+    - name: Clone KernelSU-Next v3.1.0-legacy-susfs
       run: |
         cd kernel_source
-        git clone --branch v3.2.0-legacy --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
+        git clone --branch v3.1.0-legacy-susfs --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
         rm -rf drivers/kernelsu 2>/dev/null
         ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
         echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
@@ -33,13 +33,12 @@ jobs:
         cd kernel_source
         cp ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.14.patch ./
         patch -p1 -F3 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || true
-        echo "Patch application done"
+        echo "Patch done"
     - name: Copy SusFS source files
       run: |
         cd kernel_source
         cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null || true
         cp -r ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/ 2>/dev/null || true
-        echo "SusFS files copied"
     - name: Ensure fs/Makefile compiles susfs
       run: |
         cd kernel_source
@@ -57,6 +56,25 @@ jobs:
         cd kernel_source
         if ! grep -q "susfs_mnt_id_backup" include/linux/mount.h; then
           sed -i '/void \*data;/a #ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_mnt_id_backup;\n#endif' include/linux/mount.h
+        fi
+    - name: Add SusFS proc_umounted stubs
+      run: |
+        cd kernel_source
+        if ! grep -q "TASK_STRUCT_PROC_UMOUNTED" include/linux/susfs_def.h; then
+          sed -i '/TASK_STRUCT_NON_ROOT_USER_APP_PROC/a #define TASK_STRUCT_PROC_UMOUNTED BIT(25)' include/linux/susfs_def.h
+          printf '#define susfs_set_current_proc_umounted() do { current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED; } while(0)\n#define susfs_is_current_proc_umounted() (!!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED))\n' >> include/linux/susfs_def.h
+        fi
+    - name: Create bridge functions
+      run: |
+        cd kernel_source
+        printf '#include <linux/version.h>\n#include <linux/fs.h>\n#include <linux/namei.h>\n#include <linux/path.h>\n#include <linux/cred.h>\nextern void escape_with_root_profile(void);\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nvoid ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid) {\n    struct path path;\n    int err = kern_path(mnt, 0, &path);\n    if (err) return;\n    if (check_mnt && path.dentry != path.mnt->mnt_root) { path_put(&path); return; }\n    dput(path.dentry);\n    mntput_no_expire(path.mnt);\n}\n#endif\n#ifdef CONFIG_KSU_SUSFS_SUS_SU\nvoid ksu_susfs_enable_sus_su(void) { pr_info(\"susfs: sus_su enabled\\n\"); }\nvoid ksu_susfs_disable_sus_su(void) { pr_info(\"susfs: sus_su disabled\\n\"); }\n#endif\nvoid ksu_escape_to_root(void) { escape_with_root_profile(); }\n' > drivers/kernelsu/susfs_bridge.c
+        echo "Created susfs_bridge.c"
+    - name: Add bridge to Kbuild
+      run: |
+        cd kernel_source
+        if ! grep -q "susfs_bridge.o" drivers/kernelsu/Kbuild; then
+          sed -i '/kernelsu-objs += extras.o/a kernelsu-objs += susfs_bridge.o' drivers/kernelsu/Kbuild
+          echo "Added susfs_bridge.o to Kbuild"
         fi
     - name: Add SusFS Kconfig
       run: |

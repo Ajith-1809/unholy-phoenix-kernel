@@ -21,12 +21,10 @@ jobs:
     - name: Replace original KernelSU with KSU-Next v3.2.0-legacy
       run: |
         cd kernel_source
-        # Remove old KernelSU
         rm -rf drivers/kernelsu
-        # Clone KSU-Next v3.2.0-legacy
+        rm -rf KernelSU KernelSU-Next
         git clone --branch v3.2.0-legacy --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
         ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
-        # Update drivers Makefile and Kconfig
         if ! grep -q "kernelsu" drivers/Makefile; then
           echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
         fi

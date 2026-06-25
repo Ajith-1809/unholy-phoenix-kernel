@@ -32,18 +32,12 @@ jobs:
       run: |
         cd kernel_source
         cp ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.14.patch ./
-        # Try applying with increasing fuzz factors
-        patch -p1 -F3 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || \
-        patch -p1 -F5 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || \
-        patch -p1 -F10 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || \
-        echo "WARN: Some patch hunks may have failed - will fix manually"
+        patch -p1 -F3 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || true
         echo "Patch application done"
     - name: Copy SusFS files
       run: |
         cd kernel_source
-        # Copy fs source files (susfs.c, sus_su.c)
         cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null || true
-        # Copy include headers (susfs.h, susfs_def.h, sus_su.h)
         cp -r ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/ 2>/dev/null || true
         echo "SusFS files copied"
     - name: Ensure fs/Makefile has susfs.o
@@ -59,7 +53,6 @@ jobs:
       run: |
         cd kernel_source
         if ! grep -q "susfs_task_state" include/linux/sched.h; then
-          # Add susfs fields before randomized_struct_fields_end
           sed -i '/randomized_struct_fields_end/i #ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_task_state;\n\tu64 susfs_last_fake_mnt_id;\n#endif' include/linux/sched.h
           echo "Added susfs fields to task_struct"
         else
@@ -77,23 +70,12 @@ jobs:
     - name: Add susfs_set_current_proc_umounted stubs
       run: |
         cd kernel_source
-        # Add the flag definition to susfs_def.h
         if ! grep -q "TASK_STRUCT_PROC_UMOUNTED" include/linux/susfs_def.h; then
           sed -i '/TASK_STRUCT_NON_ROOT_USER_APP_PROC/a #define TASK_STRUCT_PROC_UMOUNTED BIT(25)' include/linux/susfs_def.h
           echo "Added TASK_STRUCT_PROC_UMOUNTED flag"
         fi
-        # Add function declarations to susfs.h
         if ! grep -q "susfs_set_current_proc_umounted" include/linux/susfs.h; then
-          cat >> include/linux/susfs.h << 'HEADER_EOF'
-
-/* proc_umounted stubs for KSU-Next legacy-susfs compatibility */
-static inline void susfs_set_current_proc_umounted(void) {
-    current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED;
-}
-static inline bool susfs_is_current_proc_umounted(void) {
-    return !!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED);
-}
-HEADER_EOF
+          printf '\n/* proc_umounted stubs for KSU-Next legacy-susfs compatibility */\nstatic inline void susfs_set_current_proc_umounted(void) {\n    current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED;\n}\nstatic inline bool susfs_is_current_proc_umounted(void) {\n    return !!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED);\n}\n' >> include/linux/susfs.h
           echo "Added susfs_set_current_proc_umounted stubs to susfs.h"
         fi
     - name: Apply KSU Kconfig from SusFS
@@ -109,49 +91,7 @@ HEADER_EOF
       run: |
         cd kernel_source
         if ! grep -q "KSU_SUSFS" fs/Kconfig; then
-          cat >> fs/Kconfig << 'KCONF_EOF'
-menuconfig KSU_SUSFS
-	bool "SusFS"
-	default n
-if KSU_SUSFS
-config KSU_SUSFS_SUS_PATH
-	bool "Hide suspicious paths"
-	default y
-config KSU_SUSFS_SUS_MOUNT
-	bool "Hide suspicious mounts"
-	default y
-config KSU_SUSFS_SUS_KSTAT
-	bool "Spoof file stats"
-	default y
-config KSU_SUSFS_SUS_OVERLAYFS
-	bool "Hide overlayfs"
-	default y
-config KSU_SUSFS_TRY_UMOUNT
-	bool "Try unmount"
-	default y
-config KSU_SUSFS_SPOOF_UNAME
-	bool "Spoof uname"
-	default y
-config KSU_SUSFS_ENABLE_LOG
-	bool "Enable logging"
-	default y
-config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-	bool "Hide symbols"
-	default y
-config KSU_SUSFS_OPEN_REDIRECT
-	bool "Open redirect"
-	default y
-config KSU_SUSFS_SUS_SU
-	bool "Suspicious su"
-	default y
-config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-	bool "Spoof cmdline"
-	default y
-config KSU_SUSFS_SELINUX_POLICY_INJECTION
-	bool "SELinux policy injection"
-	default y
-endif
-KCONF_EOF
+          printf 'menuconfig KSU_SUSFS\n\tbool "SusFS"\n\tdefault n\nif KSU_SUSFS\nconfig KSU_SUSFS_SUS_PATH\n\tbool "Hide suspicious paths"\n\tdefault y\nconfig KSU_SUSFS_SUS_MOUNT\n\tbool "Hide suspicious mounts"\n\tdefault y\nconfig KSU_SUSFS_SUS_KSTAT\n\tbool "Spoof file stats"\n\tdefault y\nconfig KSU_SUSFS_SUS_OVERLAYFS\n\tbool "Hide overlayfs"\n\tdefault y\nconfig KSU_SUSFS_TRY_UMOUNT\n\tbool "Try unmount"\n\tdefault y\nconfig KSU_SUSFS_SPOOF_UNAME\n\tbool "Spoof uname"\n\tdefault y\nconfig KSU_SUSFS_ENABLE_LOG\n\tbool "Enable logging"\n\tdefault y\nconfig KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS\n\tbool "Hide symbols"\n\tdefault y\nconfig KSU_SUSFS_OPEN_REDIRECT\n\tbool "Open redirect"\n\tdefault y\nconfig KSU_SUSFS_SUS_SU\n\tbool "Suspicious su"\n\tdefault y\nconfig KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG\n\tbool "Spoof cmdline"\n\tdefault y\nconfig KSU_SUSFS_SELINUX_POLICY_INJECTION\n\tbool "SELinux policy injection"\n\tdefault y\nendif\n' >> fs/Kconfig
           echo "Added SusFS Kconfig"
         else
           echo "SusFS Kconfig already present"
@@ -161,25 +101,7 @@ KCONF_EOF
         cd kernel_source
         sed -i '/^CONFIG_KSU/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
         sed -i '/^CONFIG_SECURITY_SELINUX/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
-        cat >> arch/arm64/configs/phoenix_defconfig << 'DEFCONFIG_EOF'
-
-CONFIG_KPROBES=y
-CONFIG_KSU=y
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
-CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_ENABLE_LOG=y
-CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-CONFIG_KSU_SUSFS_SUS_SU=y
-CONFIG_KSU_SUSFS_SELINUX_POLICY_INJECTION=y
-CONFIG_SECURITY_SELINUX=y
-DEFCONFIG_EOF
+        printf '\nCONFIG_KPROBES=y\nCONFIG_KSU=y\nCONFIG_KSU_SUSFS=y\nCONFIG_KSU_SUSFS_SUS_PATH=y\nCONFIG_KSU_SUSFS_SUS_MOUNT=y\nCONFIG_KSU_SUSFS_SUS_KSTAT=y\nCONFIG_KSU_SUSFS_SUS_OVERLAYFS=y\nCONFIG_KSU_SUSFS_TRY_UMOUNT=y\nCONFIG_KSU_SUSFS_SPOOF_UNAME=y\nCONFIG_KSU_SUSFS_ENABLE_LOG=y\nCONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y\nCONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y\nCONFIG_KSU_SUSFS_OPEN_REDIRECT=y\nCONFIG_KSU_SUSFS_SUS_SU=y\nCONFIG_KSU_SUSFS_SELINUX_POLICY_INJECTION=y\nCONFIG_SECURITY_SELINUX=y\n' >> arch/arm64/configs/phoenix_defconfig
         echo "Defconfig updated"
     - name: Build
       run: |
@@ -188,20 +110,7 @@ DEFCONFIG_EOF
         mkdir -p out
         cp arch/arm64/configs/phoenix_defconfig out/.config
         make O=out ARCH=arm64 oldconfig < /dev/null 2>&1 || true
-        make -j$(nproc) O=out \
-          HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld \
-          HOSTCFLAGS=-fcommon KBUILD_HOSTCFLAGS=-fcommon \
-          ARCH=arm64 \
-          CC="${{ github.workspace }}/proton-clang/bin/clang" \
-          CROSS_COMPILE="${{ github.workspace }}/proton-clang/bin/aarch64-linux-gnu-" \
-          CROSS_COMPILE_ARM32="${{ github.workspace }}/proton-clang/bin/arm-linux-gnueabi-" \
-          LD="${{ github.workspace }}/proton-clang/bin/ld.lld" \
-          AR="${{ github.workspace }}/proton-clang/bin/llvm-ar" \
-          NM="${{ github.workspace }}/proton-clang/bin/llvm-nm" \
-          OBJCOPY="${{ github.workspace }}/proton-clang/bin/llvm-objcopy" \
-          OBJDUMP="${{ github.workspace }}/proton-clang/bin/llvm-objdump" \
-          STRIP="${{ github.workspace }}/proton-clang/bin/llvm-strip" \
-          Image.gz-dtb 2>&1 | tee ${{ github.workspace }}/build.log
+        make -j$(nproc) O=out HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld HOSTCFLAGS=-fcommon KBUILD_HOSTCFLAGS=-fcommon ARCH=arm64 CC="${{ github.workspace }}/proton-clang/bin/clang" CROSS_COMPILE="${{ github.workspace }}/proton-clang/bin/aarch64-linux-gnu-" CROSS_COMPILE_ARM32="${{ github.workspace }}/proton-clang/bin/arm-linux-gnueabi-" LD="${{ github.workspace }}/proton-clang/bin/ld.lld" AR="${{ github.workspace }}/proton-clang/bin/llvm-ar" NM="${{ github.workspace }}/proton-clang/bin/llvm-nm" OBJCOPY="${{ github.workspace }}/proton-clang/bin/llvm-objcopy" OBJDUMP="${{ github.workspace }}/proton-clang/bin/llvm-objdump" STRIP="${{ github.workspace }}/proton-clang/bin/llvm-strip" Image.gz-dtb 2>&1 | tee ${{ github.workspace }}/build.log
     - name: Package
       run: |
         if [ -f kernel_source/out/arch/arm64/boot/Image.gz-dtb ]; then

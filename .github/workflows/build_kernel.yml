@@ -18,20 +18,213 @@ jobs:
       run: git clone --depth 1 -b Unholy https://github.com/KBapna/Unholy_Phoenix_Redmi_K30_Kernel.git kernel_source
     - name: Clone toolchain
       run: git clone --depth=1 https://github.com/kdrag0n/proton-clang.git proton-clang
-    - name: Clone KernelSU-Next with SusFS
-      run: cd kernel_source && git clone --branch legacy-susfs --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git && rm -rf drivers/kernelsu 2>/dev/null; ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu && echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile && sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-    - name: Clone SusFS files
+    - name: Clone KernelSU-Next legacy-susfs
+      run: |
+        cd kernel_source
+        git clone --branch legacy-susfs --depth 1 https://github.com/KernelSU-Next/KernelSU-Next.git
+        rm -rf drivers/kernelsu 2>/dev/null
+        ln -sf ../KernelSU-Next/kernel drivers/kernelsu || cp -r KernelSU-Next/kernel drivers/kernelsu
+        echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+        sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+    - name: Clone SusFS
       run: git clone --depth 1 -b kernel-4.14 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu || true
-    - name: Copy SusFS headers
-      run: cd kernel_source && [ -d ../susfs4ksu/kernel_patches/include ] && cp -r ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/ 2>/dev/null; [ -d ../susfs4ksu/kernel_patches/fs ] && cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null; echo "SusFS files copied"
-    - name: Add SusFS Kconfig
-      run: cd kernel_source && echo 'menuconfig KSU_SUSFS' >> fs/Kconfig && echo '	bool "SusFS"' >> fs/Kconfig && echo '	default n' >> fs/Kconfig && echo 'if KSU_SUSFS' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_PATH' >> fs/Kconfig && echo '	bool "Hide suspicious paths"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_MOUNT' >> fs/Kconfig && echo '	bool "Hide suspicious mounts"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_KSTAT' >> fs/Kconfig && echo '	bool "Spoof file stats"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_OVERLAYFS' >> fs/Kconfig && echo '	bool "Hide overlayfs"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_TRY_UMOUNT' >> fs/Kconfig && echo '	bool "Try unmount"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SPOOF_UNAME' >> fs/Kconfig && echo '	bool "Spoof uname"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_ENABLE_LOG' >> fs/Kconfig && echo '	bool "Enable logging"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' >> fs/Kconfig && echo '	bool "Hide symbols"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_OPEN_REDIRECT' >> fs/Kconfig && echo '	bool "Open redirect"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SUS_SU' >> fs/Kconfig && echo '	bool "Suspicious su"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG' >> fs/Kconfig && echo '	bool "Spoof cmdline"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'config KSU_SUSFS_SELINUX_POLICY_INJECTION' >> fs/Kconfig && echo '	bool "SELinux policy injection"' >> fs/Kconfig && echo '	default y' >> fs/Kconfig && echo 'endif' >> fs/Kconfig
+    - name: Apply SusFS kernel patch
+      run: |
+        cd kernel_source
+        cp ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.14.patch ./
+        # Try applying with increasing fuzz factors
+        patch -p1 -F3 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || \
+        patch -p1 -F5 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || \
+        patch -p1 -F10 --forward < 50_add_susfs_in_kernel-4.14.patch 2>&1 || \
+        echo "WARN: Some patch hunks may have failed - will fix manually"
+        echo "Patch application done"
+    - name: Copy SusFS files
+      run: |
+        cd kernel_source
+        # Copy fs source files (susfs.c, sus_su.c)
+        cp -r ../susfs4ksu/kernel_patches/fs/* ./fs/ 2>/dev/null || true
+        # Copy include headers (susfs.h, susfs_def.h, sus_su.h)
+        cp -r ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/ 2>/dev/null || true
+        echo "SusFS files copied"
+    - name: Ensure fs/Makefile has susfs.o
+      run: |
+        cd kernel_source
+        if ! grep -q "susfs.o" fs/Makefile; then
+          sed -i '/^obj-y.*nsfs.o/a obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile
+          echo "Added susfs.o to fs/Makefile"
+        else
+          echo "fs/Makefile already has susfs.o"
+        fi
+    - name: Ensure task_struct has susfs fields
+      run: |
+        cd kernel_source
+        if ! grep -q "susfs_task_state" include/linux/sched.h; then
+          # Add susfs fields before randomized_struct_fields_end
+          sed -i '/randomized_struct_fields_end/i #ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_task_state;\n\tu64 susfs_last_fake_mnt_id;\n#endif' include/linux/sched.h
+          echo "Added susfs fields to task_struct"
+        else
+          echo "task_struct already has susfs fields"
+        fi
+    - name: Ensure mount.h has susfs field
+      run: |
+        cd kernel_source
+        if ! grep -q "susfs_mnt_id_backup" include/linux/mount.h; then
+          sed -i '/void \*data;/a #ifdef CONFIG_KSU_SUSFS\n\tu64 susfs_mnt_id_backup;\n#endif' include/linux/mount.h
+          echo "Added susfs_mnt_id_backup to vfsmount"
+        else
+          echo "mount.h already has susfs field"
+        fi
+    - name: Add susfs_set_current_proc_umounted stubs
+      run: |
+        cd kernel_source
+        # Add the flag definition to susfs_def.h
+        if ! grep -q "TASK_STRUCT_PROC_UMOUNTED" include/linux/susfs_def.h; then
+          sed -i '/TASK_STRUCT_NON_ROOT_USER_APP_PROC/a #define TASK_STRUCT_PROC_UMOUNTED BIT(25)' include/linux/susfs_def.h
+          echo "Added TASK_STRUCT_PROC_UMOUNTED flag"
+        fi
+        # Add function declarations to susfs.h
+        if ! grep -q "susfs_set_current_proc_umounted" include/linux/susfs.h; then
+          cat >> include/linux/susfs.h << 'HEADER_EOF'
+
+/* proc_umounted stubs for KSU-Next legacy-susfs compatibility */
+static inline void susfs_set_current_proc_umounted(void) {
+    current->susfs_task_state |= TASK_STRUCT_PROC_UMOUNTED;
+}
+static inline bool susfs_is_current_proc_umounted(void) {
+    return !!(current->susfs_task_state & TASK_STRUCT_PROC_UMOUNTED);
+}
+HEADER_EOF
+          echo "Added susfs_set_current_proc_umounted stubs to susfs.h"
+        fi
+    - name: Apply KSU Kconfig from SusFS
+      run: |
+        cd kernel_source
+        cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/ 2>/dev/null || true
+        if [ -f KernelSU/10_enable_susfs_for_ksu.patch ]; then
+          cd KernelSU
+          patch -p1 --forward < 10_enable_susfs_for_ksu.patch 2>&1 || echo "WARN: KSU Kconfig patch may have partial failures"
+        fi
+        echo "KSU Kconfig done"
+    - name: Add SusFS Kconfig to fs
+      run: |
+        cd kernel_source
+        if ! grep -q "KSU_SUSFS" fs/Kconfig; then
+          cat >> fs/Kconfig << 'KCONF_EOF'
+menuconfig KSU_SUSFS
+	bool "SusFS"
+	default n
+if KSU_SUSFS
+config KSU_SUSFS_SUS_PATH
+	bool "Hide suspicious paths"
+	default y
+config KSU_SUSFS_SUS_MOUNT
+	bool "Hide suspicious mounts"
+	default y
+config KSU_SUSFS_SUS_KSTAT
+	bool "Spoof file stats"
+	default y
+config KSU_SUSFS_SUS_OVERLAYFS
+	bool "Hide overlayfs"
+	default y
+config KSU_SUSFS_TRY_UMOUNT
+	bool "Try unmount"
+	default y
+config KSU_SUSFS_SPOOF_UNAME
+	bool "Spoof uname"
+	default y
+config KSU_SUSFS_ENABLE_LOG
+	bool "Enable logging"
+	default y
+config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+	bool "Hide symbols"
+	default y
+config KSU_SUSFS_OPEN_REDIRECT
+	bool "Open redirect"
+	default y
+config KSU_SUSFS_SUS_SU
+	bool "Suspicious su"
+	default y
+config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+	bool "Spoof cmdline"
+	default y
+config KSU_SUSFS_SELINUX_POLICY_INJECTION
+	bool "SELinux policy injection"
+	default y
+endif
+KCONF_EOF
+          echo "Added SusFS Kconfig"
+        else
+          echo "SusFS Kconfig already present"
+        fi
     - name: Configure
-      run: cd kernel_source && sed -i '/^CONFIG_KSU/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null; sed -i '/^CONFIG_SECURITY_SELINUX/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null; echo -e '\nCONFIG_KPROBES=y\nCONFIG_KSU=y\nCONFIG_KSU_SUSFS=y\nCONFIG_KSU_SUSFS_SUS_PATH=y\nCONFIG_KSU_SUSFS_SUS_MOUNT=y\nCONFIG_KSU_SUSFS_SUS_KSTAT=y\nCONFIG_KSU_SUSFS_SUS_OVERLAYFS=y\nCONFIG_KSU_SUSFS_TRY_UMOUNT=y\nCONFIG_KSU_SUSFS_SPOOF_UNAME=y\nCONFIG_KSU_SUSFS_ENABLE_LOG=y\nCONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y\nCONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y\nCONFIG_KSU_SUSFS_OPEN_REDIRECT=y\nCONFIG_KSU_SUSFS_SUS_SU=y\nCONFIG_KSU_SUSFS_SELINUX_POLICY_INJECTION=y\nCONFIG_SECURITY_SELINUX=y' >> arch/arm64/configs/phoenix_defconfig
+      run: |
+        cd kernel_source
+        sed -i '/^CONFIG_KSU/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
+        sed -i '/^CONFIG_SECURITY_SELINUX/d' arch/arm64/configs/phoenix_defconfig 2>/dev/null
+        cat >> arch/arm64/configs/phoenix_defconfig << 'DEFCONFIG_EOF'
+
+CONFIG_KPROBES=y
+CONFIG_KSU=y
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+CONFIG_KSU_SUSFS_ENABLE_LOG=y
+CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_KSU_SUSFS_SUS_SU=y
+CONFIG_KSU_SUSFS_SELINUX_POLICY_INJECTION=y
+CONFIG_SECURITY_SELINUX=y
+DEFCONFIG_EOF
+        echo "Defconfig updated"
     - name: Build
-      run: cd kernel_source && export PATH=${{ github.workspace }}/proton-clang/bin:$PATH && mkdir -p out && cp arch/arm64/configs/phoenix_defconfig out/.config && make O=out ARCH=arm64 oldconfig < /dev/null 2>&1 || true && make -j$(nproc) O=out HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld HOSTCFLAGS=-fcommon KBUILD_HOSTCFLAGS=-fcommon ARCH=arm64 CC="${{ github.workspace }}/proton-clang/bin/clang" CROSS_COMPILE="${{ github.workspace }}/proton-clang/bin/aarch64-linux-gnu-" CROSS_COMPILE_ARM32="${{ github.workspace }}/proton-clang/bin/arm-linux-gnueabi-" LD="${{ github.workspace }}/proton-clang/bin/ld.lld" AR="${{ github.workspace }}/proton-clang/bin/llvm-ar" NM="${{ github.workspace }}/proton-clang/bin/llvm-nm" OBJCOPY="${{ github.workspace }}/proton-clang/bin/llvm-objcopy" OBJDUMP="${{ github.workspace }}/proton-clang/bin/llvm-objdump" STRIP="${{ github.workspace }}/proton-clang/bin/llvm-strip" Image.gz-dtb 2>&1 | tee ${{ github.workspace }}/build.log
+      run: |
+        cd kernel_source
+        export PATH=${{ github.workspace }}/proton-clang/bin:$PATH
+        mkdir -p out
+        cp arch/arm64/configs/phoenix_defconfig out/.config
+        make O=out ARCH=arm64 oldconfig < /dev/null 2>&1 || true
+        make -j$(nproc) O=out \
+          HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld \
+          HOSTCFLAGS=-fcommon KBUILD_HOSTCFLAGS=-fcommon \
+          ARCH=arm64 \
+          CC="${{ github.workspace }}/proton-clang/bin/clang" \
+          CROSS_COMPILE="${{ github.workspace }}/proton-clang/bin/aarch64-linux-gnu-" \
+          CROSS_COMPILE_ARM32="${{ github.workspace }}/proton-clang/bin/arm-linux-gnueabi-" \
+          LD="${{ github.workspace }}/proton-clang/bin/ld.lld" \
+          AR="${{ github.workspace }}/proton-clang/bin/llvm-ar" \
+          NM="${{ github.workspace }}/proton-clang/bin/llvm-nm" \
+          OBJCOPY="${{ github.workspace }}/proton-clang/bin/llvm-objcopy" \
+          OBJDUMP="${{ github.workspace }}/proton-clang/bin/llvm-objdump" \
+          STRIP="${{ github.workspace }}/proton-clang/bin/llvm-strip" \
+          Image.gz-dtb 2>&1 | tee ${{ github.workspace }}/build.log
     - name: Package
-      run: if [ -f kernel_source/out/arch/arm64/boot/Image.gz-dtb ]; then git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3 && cp kernel_source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ && cd AnyKernel3 && sed -i 's/device.name1=.*/device.name1=phoenix/' anykernel.sh && sed -i 's/device.name2=.*/device.name2=phoenixin/' anykernel.sh && sed -i 's/BLOCK=.*/BLOCK=auto;/' anykernel.sh && sed -i '/backup_file init.rc/d' anykernel.sh && sed -i '/replace_string init.rc/d' anykernel.sh && sed -i '/init.tuna/d' anykernel.sh && sed -i '/fstab.tuna/d' anykernel.sh && sed -i '/backup_file fstab.tuna/d' anykernel.sh && sed -i '/patch_fstab/d' anykernel.sh && sed -i '/insert_line init.tuna/d' anykernel.sh && sed -i '/append_file fstab.tuna/d' anykernel.sh && zip -r9 ../AnyKernel-PocoX2.zip * -x .git README.md placeholder; else echo "Image not found"; tail -100 build.log; exit 1; fi
+      run: |
+        if [ -f kernel_source/out/arch/arm64/boot/Image.gz-dtb ]; then
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          cp kernel_source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          cd AnyKernel3
+          sed -i 's/device.name1=.*/device.name1=phoenix/' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=phoenixin/' anykernel.sh
+          sed -i 's/BLOCK=.*/BLOCK=auto;/' anykernel.sh
+          sed -i '/backup_file init.rc/d' anykernel.sh
+          sed -i '/replace_string init.rc/d' anykernel.sh
+          sed -i '/init.tuna/d' anykernel.sh
+          sed -i '/fstab.tuna/d' anykernel.sh
+          sed -i '/backup_file fstab.tuna/d' anykernel.sh
+          sed -i '/patch_fstab/d' anykernel.sh
+          sed -i '/insert_line init.tuna/d' anykernel.sh
+          sed -i '/append_file fstab.tuna/d' anykernel.sh
+          zip -r9 ../AnyKernel-PocoX2.zip * -x .git README.md placeholder
+        else
+          echo "Image not found!"
+          tail -200 build.log
+          exit 1
+        fi
     - uses: actions/upload-artifact@v4
       with:
         name: AnyKernel-PocoX2
